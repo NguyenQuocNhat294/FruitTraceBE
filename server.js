@@ -3,7 +3,6 @@ const express  = require('express');
 const mongoose = require('mongoose');
 const cors     = require('cors');
 const helmet   = require('helmet');
-const path     = require('path');
 
 // ── Routes ──────────────────────────────────────────
 const authRoutes       = require('./routes/authRoutes');
@@ -23,13 +22,13 @@ const errorHandler = require('./middlewares/errorHandler');
 // ── App setup ───────────────────────────────────────
 const app = express();
 
-// 1. Helmet — cho phép ảnh load cross-origin
+// 1. Helmet
 app.use(helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginEmbedderPolicy: false,
 }));
 
-// 2. CORS — phải cho phép header ngrok-skip-browser-warning (axios) để preflight OPTIONS qua ngrok
+// 2. CORS
 function isAllowedCorsOrigin(origin) {
     if (!origin) return true;
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
@@ -59,11 +58,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 4. Static files — serve ảnh từ frontend/public/images
-app.use('/images', express.static(
-    path.join(__dirname, '../frontend/public/images'),
-    { maxAge: '1d' }
-));
+// 4. KHÔNG còn serve static /images nữa — ảnh đã lưu trên Cloudinary
 
 // ── API Routes ──────────────────────────────────────
 app.use('/api/auth',        authRoutes);
@@ -79,9 +74,10 @@ app.use('/api/admin',       adminRoutes);
 
 // ── Health check ─────────────────────────────────────
 app.get('/health', (req, res) => res.json({
-    status: 'ok',
-    time:   new Date().toISOString(),
-    db:     mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    status:   'ok',
+    time:     new Date().toISOString(),
+    db:       mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    storage:  'cloudinary',
 }));
 
 // ── 404 handler ──────────────────────────────────────
@@ -96,6 +92,14 @@ app.use(errorHandler);
 const PORT      = process.env.PORT      || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 
+// Kiểm tra biến môi trường Cloudinary lúc khởi động
+const REQUIRED_ENV = ['MONGO_URI', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'];
+const missingEnv   = REQUIRED_ENV.filter((key) => !process.env[key]);
+if (missingEnv.length > 0) {
+    console.error('❌ Thiếu biến môi trường:', missingEnv.join(', '));
+    process.exit(1);
+}
+
 mongoose.set('strictQuery', false);
 
 mongoose
@@ -104,7 +108,7 @@ mongoose
         console.log('✅ Kết nối thành công tới MongoDB');
         app.listen(PORT, () => {
             console.log(`🚀 Server chạy tại: http://localhost:${PORT}`);
-            console.log(`🖼️  Images:          http://localhost:${PORT}/images/`);
+            console.log(`☁️  Storage:         Cloudinary (${process.env.CLOUDINARY_CLOUD_NAME})`);
             console.log(`❤️  Health check:    http://localhost:${PORT}/health`);
         });
     })
