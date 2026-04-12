@@ -1,8 +1,10 @@
 require('dotenv').config();
-const express  = require('express');
-const mongoose = require('mongoose');
-const cors     = require('cors');
-const helmet   = require('helmet');
+const express       = require('express');
+const mongoose      = require('mongoose');
+const cors          = require('cors');
+const helmet        = require('helmet');
+const mongoSanitize = require('express-mongo-sanitize');
+const rateLimit     = require('express-rate-limit');
 
 // ── Routes ──────────────────────────────────────────
 const authRoutes       = require('./routes/authRoutes');
@@ -22,7 +24,7 @@ const errorHandler = require('./middlewares/errorHandler');
 // ── App setup ───────────────────────────────────────
 const app = express();
 
-// 1. Helmet
+// 1. Helmet — bảo mật HTTP headers
 app.use(helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginEmbedderPolicy: false,
@@ -54,11 +56,22 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 }));
 
-// 3. Body parsers
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 3. Body parsers — giới hạn size để tránh payload attack
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 4. KHÔNG còn serve static /images nữa — ảnh đã lưu trên Cloudinary
+// 4. Chống NoSQL Injection — xóa $ và . khỏi input
+app.use(mongoSanitize());
+
+// 5. Rate limit toàn cục — tối đa 100 request / 15 phút / IP
+app.use(rateLimit({
+    windowMs:        15 * 60 * 1000,
+    max:             100,
+    message:         { message: 'Quá nhiều yêu cầu, thử lại sau 15 phút' },
+    standardHeaders: true,
+    legacyHeaders:   false,
+    skip: (req) => req.path === '/health', // bỏ qua health check
+}));
 
 // ── API Routes ──────────────────────────────────────
 app.use('/api/auth',        authRoutes);
@@ -74,10 +87,11 @@ app.use('/api/admin',       adminRoutes);
 
 // ── Health check ─────────────────────────────────────
 app.get('/health', (req, res) => res.json({
-    status:   'ok',
-    time:     new Date().toISOString(),
-    db:       mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    storage:  'cloudinary',
+    status:  'ok',
+    time:    new Date().toISOString(),
+    db:      mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    storage: 'cloudinary',
+    env:     process.env.NODE_ENV || 'development',
 }));
 
 // ── 404 handler ──────────────────────────────────────
@@ -92,7 +106,6 @@ app.use(errorHandler);
 const PORT      = process.env.PORT      || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 
-// Kiểm tra biến môi trường Cloudinary lúc khởi động
 const REQUIRED_ENV = ['MONGO_URI', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'];
 const missingEnv   = REQUIRED_ENV.filter((key) => !process.env[key]);
 if (missingEnv.length > 0) {
@@ -109,6 +122,7 @@ mongoose
         app.listen(PORT, () => {
             console.log(`🚀 Server chạy tại: http://localhost:${PORT}`);
             console.log(`☁️  Storage:         Cloudinary (${process.env.CLOUDINARY_CLOUD_NAME})`);
+            console.log(`🔒 Bảo mật:         Helmet + CORS + Rate Limit + Mongo Sanitize`);
             console.log(`❤️  Health check:    http://localhost:${PORT}/health`);
         });
     })
