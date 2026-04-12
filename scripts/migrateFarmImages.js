@@ -14,10 +14,8 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ⚠️ Đổi đúng tên model nếu khác
 const Farm = require('../models/Farm');
 
-// Thư mục có thể chứa ảnh cũ
 const IMAGE_DIRS = [
     path.join(__dirname, '../public/images'),
     path.join(__dirname, '../../frontend/public/images'),
@@ -56,8 +54,8 @@ async function migrate() {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('✅ Kết nối MongoDB\n');
 
-    // Lấy farm còn ảnh dạng /images/... (chưa migrate)
-    const farms = await Farm.find({ images: /^\/images\// });
+    // ✅ Đúng field name là "image" (không phải "images")
+    const farms = await Farm.find({ image: /^\/images\// });
     console.log(`🏡 Tìm thấy ${farms.length} farm cần migrate\n`);
 
     if (farms.length === 0) {
@@ -68,9 +66,9 @@ async function migrate() {
     let success = 0, failed = 0;
 
     for (const farm of farms) {
-        console.log(`🔄 [${farm.name || farm._id}]`);
+        console.log(`🔄 [${farm.FarmName || farm._id}]`);
 
-        const filenames = (farm.images || '')
+        const filenames = (farm.image || '')
             .split(',')
             .map(s => s.trim())
             .map(s => path.basename(s))
@@ -95,7 +93,7 @@ async function migrate() {
         }
 
         if (newUrls.length > 0) {
-            farm.images = newUrls.join(',');
+            farm.image = newUrls.join(','); // ✅ lưu đúng field "image"
             await farm.save();
             success++;
         } else {
