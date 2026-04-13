@@ -1,6 +1,17 @@
 // backend/controllers/batchController.js
 const Batch = require('../models/Batch');
 
+// URL frontend — ưu tiên env, fallback Vercel
+const FRONTEND_URL = (process.env.CLIENT_URL || '')
+    .split(',')
+    .map(s => s.trim())
+    .find(s => s.includes('vercel.app') || s.includes('https://'))
+    || 'https://ftrui-trace-fe.vercel.app';
+
+// Tạo QR URL chuẩn cho batch
+const makeQrUrl = (batchcode) =>
+    `${FRONTEND_URL}/trace?code=${encodeURIComponent(batchcode)}`;
+
 // GET /api/batches?farmid=F001&status=available&productid=P001
 const getBatches = async (req, res, next) => {
     try {
@@ -29,10 +40,10 @@ const getBatchById = async (req, res, next) => {
     } catch (err) { next(err); }
 };
 
-// GET /api/batches/code/:code — tìm theo batchcode HOẶC custom id
+// GET /api/batches/code/:code
 const getBatchByCode = async (req, res, next) => {
     try {
-        const code = req.params.code;
+        const code  = req.params.code;
         const batch = await Batch.findOne({
             $or: [
                 { batchcode: { $regex: `^${code}$`, $options: 'i' } },
@@ -47,7 +58,18 @@ const getBatchByCode = async (req, res, next) => {
 // POST /api/batches
 const createBatch = async (req, res, next) => {
     try {
-        const batch = new Batch(req.body);
+        const data = { ...req.body };
+
+        // ✅ Tự động generate batchcode nếu chưa có
+        if (!data.batchcode) {
+            const count = await Batch.countDocuments();
+            data.batchcode = `BATCH-${String(count + 1).padStart(3, '0')}`;
+        }
+
+        // ✅ Tự động tạo qr_code đúng URL Vercel
+        data.qr_code = makeQrUrl(data.batchcode);
+
+        const batch = new Batch(data);
         await batch.save();
         res.status(201).json(batch);
     } catch (err) { next(err); }
@@ -58,6 +80,12 @@ const updateBatch = async (req, res, next) => {
     try {
         const batch = await Batch.findById(req.params.id);
         if (!batch) return res.status(404).json({ message: 'Không tìm thấy lô hàng' });
+
+        // Nếu batchcode thay đổi → cập nhật lại qr_code
+        if (req.body.batchcode && req.body.batchcode !== batch.batchcode) {
+            req.body.qr_code = makeQrUrl(req.body.batchcode);
+        }
+
         Object.assign(batch, req.body);
         await batch.save();
         res.json(batch);

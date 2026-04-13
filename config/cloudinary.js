@@ -11,9 +11,9 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
     cloudinary,
     params: {
-        folder:           'fruittrace',
-        allowed_formats:  ['jpg', 'jpeg', 'png', 'webp'],
-        transformation:   [{ width: 800, crop: 'limit' }],
+        folder:          'fruittrace',
+        allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+        transformation:  [{ width: 800, crop: 'limit' }],
     },
 });
 
