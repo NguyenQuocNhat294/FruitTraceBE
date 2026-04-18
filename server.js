@@ -3,6 +3,7 @@ const express       = require('express');
 const mongoose      = require('mongoose');
 const cors          = require('cors');
 const helmet        = require('helmet');
+const cookieParser  = require('cookie-parser');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit     = require('express-rate-limit');
 
@@ -30,14 +31,14 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false,
 }));
 
-// 2. CORS
+// 2. CORS — cho phép gửi cookie cross-origin
 function isAllowedCorsOrigin(origin) {
     if (!origin) return true;
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
     try {
         const host = new URL(origin).hostname;
         if (/\.ngrok-free\.(app|dev)$/i.test(host)) return true;
-        if (/\.ngrok\.io$/i.test(host)) return true;
+        if (/\.ngrok\.io$/i.test(host))              return true;
     } catch { /* ignore */ }
     const extra = (process.env.CLIENT_URL || '')
         .split(',')
@@ -51,26 +52,29 @@ app.use(cors({
         if (isAllowedCorsOrigin(origin)) return callback(null, true);
         return callback(null, false);
     },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials:    true,  // ✅ bắt buộc để cookie cross-origin hoạt động
+    methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 }));
 
-// 3. Body parsers — giới hạn size để tránh payload attack
+// 3. Cookie parser — ✅ phải đặt TRƯỚC các route
+app.use(cookieParser());
+
+// 4. Body parser
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 4. Chống NoSQL Injection — xóa $ và . khỏi input
+// 5. Mongo sanitize
 app.use(mongoSanitize());
 
-// 5. Rate limit toàn cục — tối đa 100 request / 15 phút / IP
+// 6. Global rate limit
 app.use(rateLimit({
     windowMs:        15 * 60 * 1000,
     max:             100,
     message:         { message: 'Quá nhiều yêu cầu, thử lại sau 15 phút' },
     standardHeaders: true,
     legacyHeaders:   false,
-    skip: (req) => req.path === '/health', // bỏ qua health check
+    skip:            (req) => req.path === '/health',
 }));
 
 // ── API Routes ──────────────────────────────────────
@@ -106,7 +110,7 @@ app.use(errorHandler);
 const PORT      = process.env.PORT      || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 
-const REQUIRED_ENV = ['MONGO_URI', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'];
+const REQUIRED_ENV = ['MONGO_URI', 'JWT_SECRET', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'];
 const missingEnv   = REQUIRED_ENV.filter((key) => !process.env[key]);
 if (missingEnv.length > 0) {
     console.error('❌ Thiếu biến môi trường:', missingEnv.join(', '));
@@ -122,7 +126,7 @@ mongoose
         app.listen(PORT, () => {
             console.log(`🚀 Server chạy tại: http://localhost:${PORT}`);
             console.log(`☁️  Storage:         Cloudinary (${process.env.CLOUDINARY_CLOUD_NAME})`);
-            console.log(`🔒 Bảo mật:         Helmet + CORS + Rate Limit + Mongo Sanitize`);
+            console.log(`🔒 Bảo mật:         Helmet + CORS + Cookie + Rate Limit + Mongo Sanitize`);
             console.log(`❤️  Health check:    http://localhost:${PORT}/health`);
         });
     })

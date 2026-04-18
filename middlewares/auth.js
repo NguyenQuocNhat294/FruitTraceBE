@@ -12,22 +12,33 @@ const normalizeRole = (role) => {
 
 module.exports = async (req, res, next) => {
     try {
-        // Lấy token từ header
-        const authHeader = req.header('Authorization') || '';
-        const token = authHeader.startsWith('Bearer ')
-            ? authHeader.slice(7).trim()
+        // ✅ Ưu tiên cookie httpOnly, fallback sang Authorization header (Postman/mobile)
+        const cookieToken = req.cookies?.token;
+        const headerToken = (req.header('Authorization') || '').startsWith('Bearer ')
+            ? req.header('Authorization').slice(7).trim()
             : null;
 
+        const token = cookieToken || headerToken;
+
         if (!token)
-            return res.status(401).json({ message: 'Không tìm thấy token, vui lòng đăng nhập' });
+            return res.status(401).json({ message: 'Chưa đăng nhập, vui lòng đăng nhập lại' });
 
         // Verify token
         let decoded;
         try {
             decoded = jwt.verify(token, process.env.JWT_SECRET);
         } catch (err) {
+            // Nếu token trong cookie hết hạn → clear cookie luôn
+            if (cookieToken) {
+                res.clearCookie('token', {
+                    httpOnly: true,
+                    secure:   process.env.NODE_ENV === 'production',
+                    sameSite: process.env.NODE_ENV === 'production' ? 'Strict' : 'Lax',
+                    path:     '/',
+                });
+            }
             if (err.name === 'TokenExpiredError')
-                return res.status(401).json({ message: 'Token đã hết hạn, vui lòng đăng nhập lại' });
+                return res.status(401).json({ message: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại' });
             return res.status(401).json({ message: 'Token không hợp lệ' });
         }
 
@@ -38,12 +49,12 @@ module.exports = async (req, res, next) => {
 
         // Kiểm tra tài khoản bị khóa
         if (user.status === 'inactive' || user.status === 'banned')
-            return res.status(403).json({ message: 'Tài khoản đã bị khóa' });
+            return res.status(403).json({ message: 'Tài khoản đã bị khóa, liên hệ admin' });
 
-        // Gắn user vào request — chuẩn hóa role
+        // Gắn user vào request
         req.user = {
             ...user.toObject(),
-            id:   user.id,   // custom id (U003)
+            id:   user.id,
             _id:  user._id,
             role: normalizeRole(user.role),
         };
