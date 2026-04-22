@@ -69,8 +69,8 @@ app.use(mongoSanitize());
 
 // 6. Global rate limit
 app.use(rateLimit({
-    windowMs:        15 * 60 * 1000,
-    max:             100,
+    windowMs: 15 * 60 * 1000,
+    max: process.env.NODE_ENV === 'production' ? 100 : 1000,
     message:         { message: 'Quá nhiều yêu cầu, thử lại sau 15 phút' },
     standardHeaders: true,
     legacyHeaders:   false,
