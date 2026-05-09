@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const express       = require('express');
 const mongoose      = require('mongoose');
 const cors          = require('cors');
@@ -26,48 +27,97 @@ const errorHandler = require('./middlewares/errorHandler');
 const app = express();
 
 // 1. Helmet — bảo mật HTTP headers
-app.use(helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-    crossOriginEmbedderPolicy: false,
-}));
+app.use(
+    helmet({
+        crossOriginResourcePolicy: { policy: 'cross-origin' },
+        crossOriginEmbedderPolicy: false,
+    })
+);
 
-// 2. CORS — cho phép gửi cookie cross-origin
-function isAllowedCorsOrigin(origin) {
-    if (!origin) return true;
-    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
-    try {
-        const host = new URL(origin).hostname;
-        if (/\.ngrok-free\.(app|dev)$/i.test(host)) return true;
-        if (/\.ngrok\.io$/i.test(host))              return true;
-    } catch { /* ignore */ }
-    const extra = (process.env.CLIENT_URL || '')
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-    return extra.includes(origin);
-}
+// 2. CORS — FIX CHO VERCEL + LOCALHOST + NGROK
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://fruit-trace-orcin.vercel.app',
+];
 
-app.use(cors({
-    origin(origin, callback) {
-        if (isAllowedCorsOrigin(origin)) return callback(null, true);
-        return callback(null, false);
-    },
-    credentials:    true,  // ✅ bắt buộc để cookie cross-origin hoạt động
-    methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
-}));
+app.use(
+    cors({
+        origin: function (origin, callback) {
 
-// 3. Cookie parser — ✅ phải đặt TRƯỚC các route
+            // Cho phép request không có origin
+            // (Postman, mobile app, server-to-server)
+            if (!origin) return callback(null, true);
+
+            // localhost + vercel
+            if (allowedOrigins.includes(origin)) {
+                return callback(null, true);
+            }
+
+            // cho phép ngrok
+            try {
+                const hostname = new URL(origin).hostname;
+
+                if (
+                    /\.ngrok-free\.app$/i.test(hostname) ||
+                    /\.ngrok\.io$/i.test(hostname)
+                ) {
+                    return callback(null, true);
+                }
+            } catch (err) {
+                console.log('❌ Invalid origin:', origin);
+            }
+
+            console.log('❌ Blocked by CORS:', origin);
+
+            return callback(
+                new Error('Not allowed by CORS')
+            );
+        },
+
+        credentials: true,
+
+        methods: [
+            'GET',
+            'POST',
+            'PUT',
+            'PATCH',
+            'DELETE',
+            'OPTIONS',
+        ],
+
+        allowedHeaders: [
+            'Content-Type',
+            'Authorization',
+            'ngrok-skip-browser-warning',
+        ],
+    })
+);
+
+// 3. Cookie parser
 app.use(cookieParser());
 
 // 4. Body parser
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.urlencoded({
+    extended: true,
+    limit: '10mb',
+}));
 
 // 5. Mongo sanitize
 app.use(mongoSanitize());
 
-// 6. Global rate limit
+// 6. Rate limit
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    message: {
+        message: 'Quá nhiều request, vui lòng thử lại sau',
+    },
+});
+
+app.use(limiter);
 
 // ── API Routes ──────────────────────────────────────
 app.use('/api/auth',        authRoutes);
@@ -82,47 +132,85 @@ app.use('/api/inspections', inspectionRoutes);
 app.use('/api/admin',       adminRoutes);
 
 // ── Health check ─────────────────────────────────────
-app.get('/health', (req, res) => res.json({
-    status:  'ok',
-    time:    new Date().toISOString(),
-    db:      mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    storage: 'cloudinary',
-    env:     process.env.NODE_ENV || 'development',
-}));
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        time: new Date().toISOString(),
+        db:
+            mongoose.connection.readyState === 1
+                ? 'connected'
+                : 'disconnected',
+        storage: 'cloudinary',
+        env: process.env.NODE_ENV || 'development',
+    });
+});
 
 // ── 404 handler ──────────────────────────────────────
 app.use((req, res) => {
-    res.status(404).json({ message: `Route ${req.method} ${req.path} not found` });
+    res.status(404).json({
+        message: `Route ${req.method} ${req.path} not found`,
+    });
 });
 
 // ── Error handler ────────────────────────────────────
 app.use(errorHandler);
 
-// ── Kết nối MongoDB & khởi động server ───────────────
-const PORT      = process.env.PORT      || 5000;
-const MONGO_URI = process.env.MONGO_URI;
+// ── ENV CHECK ────────────────────────────────────────
+const REQUIRED_ENV = [
+    'MONGO_URI',
+    'JWT_SECRET',
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+];
 
-const REQUIRED_ENV = ['MONGO_URI', 'JWT_SECRET', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'];
-const missingEnv   = REQUIRED_ENV.filter((key) => !process.env[key]);
+const missingEnv = REQUIRED_ENV.filter(
+    (key) => !process.env[key]
+);
+
 if (missingEnv.length > 0) {
-    console.error('❌ Thiếu biến môi trường:', missingEnv.join(', '));
+    console.error(
+        '❌ Thiếu biến môi trường:',
+        missingEnv.join(', ')
+    );
     process.exit(1);
 }
+
+// ── MongoDB connect ─────────────────────────────────
+const PORT      = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGO_URI;
 
 mongoose.set('strictQuery', false);
 
 mongoose
     .connect(MONGO_URI)
     .then(() => {
+
         console.log('✅ Kết nối thành công tới MongoDB');
+
         app.listen(PORT, () => {
-            console.log(`🚀 Server chạy tại: http://localhost:${PORT}`);
-            console.log(`☁️  Storage:         Cloudinary (${process.env.CLOUDINARY_CLOUD_NAME})`);
-            console.log(`🔒 Bảo mật:         Helmet + CORS + Cookie + Rate Limit + Mongo Sanitize`);
-            console.log(`❤️  Health check:    http://localhost:${PORT}/health`);
+
+            console.log(`🚀 Server chạy tại PORT: ${PORT}`);
+
+            console.log(
+                `☁️ Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME}`
+            );
+
+            console.log(
+                `🔒 Security: Helmet + CORS + Cookie + RateLimit + MongoSanitize`
+            );
+
+            console.log(
+                `❤️ Health check: /health`
+            );
         });
     })
     .catch((err) => {
-        console.error('❌ Lỗi kết nối MongoDB:', err.message);
+
+        console.error(
+            '❌ Lỗi kết nối MongoDB:',
+            err.message
+        );
+
         process.exit(1);
     });
