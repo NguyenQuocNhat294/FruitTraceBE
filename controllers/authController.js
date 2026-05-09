@@ -83,10 +83,13 @@ const login = async (req, res, next) => {
         // ✅ Lưu token trong cookie httpOnly — không trả về trong body
         res.cookie('token', token, COOKIE_OPTS);
 
-        res.json({
-            message: 'Đăng nhập thành công',
-            user: safeUser(user, role),
-        });
+    res.json({
+    message: 'Đăng nhập thành công',
+
+    token,
+
+    user: safeUser(user, role),
+});
     } catch (err) { next(err); }
 };
 
